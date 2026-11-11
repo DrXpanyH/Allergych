@@ -1,7 +1,7 @@
 from fasthtml.common import *
 from fastlite import database, NotFoundError
 import secrets
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -253,25 +253,63 @@ def get(session, token: str):
         return "Invalid or expired magic link"
 
 
-def basic_auth(f):
-    @wraps(f)
-    def wrapper(session, *args, **kwargs):
-        if "auth" not in session:
-            return Response('Not Authorized', status_code=401)
-        return f(session, *args, **kwargs)
-    return wrapper
+# def basic_auth(f):
+#     @wraps(f)
+#     def wrapper(session, *args, **kwargs):
+#         if "auth" not in session:
+#             return Response('Not Authorized', status_code=401)
+#         return f(session, *args, **kwargs)
+#     return wrapper
 
 @rt('/main')
-@basic_auth
+# @basic_auth
 def get(session):    
     return Titled('Меню',
                     Button("Выйти", hx_post="/logout", 
-                        style="position: fixed; top: 16px; right: 16px; ")
+                        style="position: fixed; top: 16px; right: 16px; "),
+                    Button("Дневник", hx_get="/diary", 
+                        style="position: fixed; top: 16px; left: 16px; ")
                     )
                 
 @rt('/logout')
 def post(session):
     del session['auth']
     return HttpHeader('HX-Redirect', '/login')
+
+def RadioGroup(title,name):
+    return Fieldset(
+        Ul(title,
+        Li(Input('0', name=name, id=f"{name}-0", type="radio", value="0", checked=True)), 
+        Li(Input('1', name=name, id=f"{name}-1", type="radio", value="1")),
+        Li(Input('2', name=name, id=f"{name}-2", type="radio", value="2")),
+        Li(Input('3', name=name, id=f"{name}-3", type="radio", value="3")),
+    ))
+
+@rt('/diary')
+def get(session):
+    return Titled('Дневник',
+                  Div('Заполните форму ниже, чтобы добавить запись в дневник:'),
+                  Form(
+                        Fieldset('Дата', 
+                               Input(name="entry_date", type="date")
+                               ),
+                        RadioGroup('Чихание', 'sneezing'),
+                        RadioGroup('Насморк', 'runny_nose'),
+                        RadioGroup('Заложенность носа', 'nasal_congestion'),
+                        RadioGroup('Зуд в носу', 'nasal_itching'),
+                        Fieldset(Ul('Прием лекарств (если применялись несколько вариантов, выберите наиболее подходящий)', 
+                                Li(Input('Отсутствие потребности в медикаментах', 
+                                      name="drug", id="drug-0", type="radio", value="0", checked=True)), 
+                                Li(Input('Антигистаминные средства местного или системного действия', 
+                                      name="drug", id="drug-1", type="radio", value="1")),
+                                Li(Input('Кортикостероиды (местного, назального применения - интраназальные глюкокортикостероиды)', 
+                                      name="drug", id="drug-2", type="radio", value="2")),
+                                Li(Input('Глюкокортикоиды (системного действия)', 
+                                      name="drug", id="drug-3", type="radio", value="3")),),
+                        #Button('Добавить запись', type="submit"),
+
+                  )
+    )
+    )
 
 serve()
