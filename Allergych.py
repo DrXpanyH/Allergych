@@ -22,6 +22,7 @@ app, rt = fast_app(live=True, debug=True, before=bware)
 
 # Register and Login Table
 db = database('data/allergych.db')
+db.execute("PRAGMA foreign_keys = ON;")
 SQL_CREATE_USERS = """
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
@@ -36,7 +37,7 @@ User = rl_users.dataclass()
 # Magic Link Table
 SQL_CREATE_MAGIC_LINK = """
 CREATE TABLE IF NOT EXISTS magic_links (
-   user_id INTEGER PRIMARY KEY REFERENCES users(user_id),
+   user_id INTEGER PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
    magic_link_token TEXT,
    magic_link_expiry TIMESTAMP,
    is_active BOOLEAN DEFAULT FALSE
@@ -45,6 +46,25 @@ CREATE TABLE IF NOT EXISTS magic_links (
 db.execute(SQL_CREATE_MAGIC_LINK)   
 magic_links = db.t.magic_links
 MagicLink = magic_links.dataclass()
+
+# Diary Table
+SQL_CREATE_DIARY = """
+CREATE TABLE IF NOT EXISTS diary (
+    entry_id INTEGER PRIMARY KEY,
+    user_id INTEGER REFERENCES users(user_id) ON DELETE CASCADE,
+    entry_date TIMESTAMP NOT NULL,
+    sneezing INTEGER NOT NULL,
+    runny_nose INTEGER NOT NULL,
+    nasal_congestion INTEGER NOT NULL,
+    nasal_itching INTEGER NOT NULL,
+    drug INTEGER NOT NULL,
+    total_score INTEGER NOT NULL,
+    UNIQUE(user_id, entry_date)
+);
+"""
+db.execute(SQL_CREATE_DIARY)
+diary = db.t.diary
+Diary = diary.dataclass()
 
 def MyForm(btn_text, target): # Universal form for both login and register pages
     return Form(
