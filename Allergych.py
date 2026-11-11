@@ -214,9 +214,12 @@ def post(email: str):
 
 @rt('/verify_magic_link/{token}')
 def get(session, token: str):
-    now = datetime.now()
+    now = datetime.now().isoformat()
     try:
-        user_mag = magic_links(where=f"magic_link_token = '{token}' AND magic_link_expiry > '{now}'")[0]
+        user_mag = magic_links(
+            where="magic_link_token = ? AND magic_link_expiry > ?", 
+            where_args=[token, now]
+        )[0]
         email=rl_users.selectone(user_id=user_mag.user_id).email
         session['auth'] = email
         magic_links.update({
