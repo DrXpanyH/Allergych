@@ -8,21 +8,43 @@ from email.mime.multipart import MIMEMultipart
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 from functools import wraps
+import os
 
-app, rt = fast_app(live=True, debug=True)
+login_redir = RedirectResponse('/login', status_code=303)
 
-# Register and Login Database
-rldb = database('data/users.db')
+def before(req, session):
+   auth = req.scope['auth'] = session.get('auth', None)
+   if not auth: return login_redir
+  
+bware = Beforeware(before, skip=[r'/favicon\.ico', r'/static/.*', r'.*\.css', '/login', '/register', '/plslogin', '/send_magic_link', r'/verify_magic_link/.*'])
+
+app, rt = fast_app(live=True, debug=True, before=bware)
+
+# Register and Login Table
+db = database('data/allergych.db')
 SQL_CREATE_USERS = """
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
     email TEXT UNIQUE NOT NULL,
-    password TEXT NOT NULL
+    password TEXT 
 );
 """
-rldb.execute(SQL_CREATE_USERS)
-rl_users = rldb.t.users
+db.execute(SQL_CREATE_USERS)
+rl_users = db.t.users
 User = rl_users.dataclass()
+
+# Magic Link Table
+SQL_CREATE_MAGIC_LINK = """
+CREATE TABLE IF NOT EXISTS magic_links (
+   user_id INTEGER PRIMARY KEY REFERENCES users(user_id),
+   magic_link_token TEXT,
+   magic_link_expiry TIMESTAMP,
+   is_active BOOLEAN DEFAULT FALSE
+);
+"""
+db.execute(SQL_CREATE_MAGIC_LINK)   
+magic_links = db.t.magic_links
+MagicLink = magic_links.dataclass()
 
 def MyForm(btn_text, target): # Universal form for both login and register pages
     return Form(
@@ -32,6 +54,20 @@ def MyForm(btn_text, target): # Universal form for both login and register pages
         Span(id="error", style="color:red"),
         hx_post=target,
         hx_target="#error",
+    )
+
+def MagicLinkForm(btn_text: str, target: str):
+    return Form(
+        Div(
+            Div(
+                Input(id='email', type='email', placeholder='Email', required=True) 
+            )
+        ),
+       Button(btn_text, type="submit", id="submit-btn"),
+       P(id="error"),
+       hx_post=target,
+       hx_target="#error",
+       hx_disabled_elt="#submit-btn"
     )
 
 @rt('/')
@@ -51,8 +87,8 @@ def get():
     return Titled('Регистрация', 
                     MyForm('Зарегистрироваться', '/register'),
                     Hr(),
-                    P("Уже есть аккаунт? ", 
-                    A("Войти", href="/login"))
+                    P("Уже есть аккаунт? ", A("Войти", href="/login")),
+                    P("Или войти без пароля? ", A("Войти без пароля", href="/plslogin"))
                 )
 
 # Password hashing
@@ -76,11 +112,14 @@ def get():
     return Titled('Вход в систему', 
                     MyForm('Войти', '/login'),
                     Hr(),
-                    P("Создать аккаунт? ", A("Регистрация", href="/register"))
+                    P("Создать аккаунт? ", A("Регистрация", href="/register")),
+                    P("Или войти без пароля? ", A("Войти без пароля", href="/plslogin"))
                   )
 
 # Password verification
 def verify_password(plain_password: str, hashed_password: str) -> bool:
+    if not hashed_password: # If the hashed password is None or empty, return False
+        return False
     try:
         # Library will return True if the password matches
         return ph.verify(hashed_password, plain_password)
@@ -101,6 +140,95 @@ def post(session, email:str, password:str):
         return "Email или пароль введены неверно"
     session['auth'] = user.email
     return HttpHeader('HX-Redirect', '/main')
+
+@rt('/plslogin')
+def get():   
+    return Titled('Войти без пароля',
+            P("Введите ваш email, и мы отправим вам ссылку для входа в систему."),
+            MagicLinkForm("Отправить ссылку", "/send_magic_link")
+        )
+    
+
+def send_magic_link_email(email: str, magic_link: str):
+    smtp_server = "smtp.gmail.com"
+    smtp_port = 465  # Port for SSL
+    
+    sender_email = os.getenv("SENDER_SERVER")  
+    sender_password = os.getenv("SENDER_PASSWORD")
+    
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = "Ссылка для входа в приложение"
+    msg["From"] = f"Мой Проект <{sender_email}>"
+    msg["To"] = email
+
+    message = Titled('Вход в приложение',
+        Body(            
+        Header(
+            H1("Привет"),
+            P(f"Нажмите на эту ссылку, чтобы войти в приложение: {magic_link}"),
+            P("Если вы не запрашивали вход в приложение, просто проигнорируйте это письмо."),
+            P("С уважением, Илья")            
+        )))
+    message = to_xml(message)
+    msg.attach(MIMEText(message, "html"))
+    
+    try:
+        # Connect to the SMTP server and send the email
+        with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
+            server.login(sender_email, sender_password)
+            server.sendmail(sender_email, email, msg.as_string())
+        print(f"[Success] The letter has been sent to {email}")
+        return True
+    except Exception as e:
+        print(f"[SMTP Error] Failed to send email: {e}")
+        return False
+
+@rt('/send_magic_link')
+def post(email: str):
+    if not email:
+        return "Email is required"
+    try:
+        user = rl_users.selectone(email=email)
+    except NotFoundError:
+        user = rl_users.insert(User(email=email, password=None))
+
+  
+    magic_link_token = secrets.token_urlsafe(32)
+    magic_link_expiry = datetime.now() + timedelta(minutes=15)
+  
+    # .upsert() automatically inserts or updates based on the primary key (user_id)
+    magic_links.upsert({
+        'user_id': user.user_id,
+        'magic_link_token': magic_link_token,
+        'magic_link_expiry': magic_link_expiry,
+        'is_active': False,
+    })  
+    magic_link = f"http://0.0.0.0:5001/verify_magic_link/{magic_link_token}"
+  
+    send_magic_link_email(email, magic_link)
+  
+    return (P("Ссылка для входа была отправлена на ваш email. Пожалуйста, проверьте вашу почту. Ссылка действительна в течение 15 минут.", 
+            id="success"), 
+            HttpHeader('HX-Reswap', 'outerHTML'), 
+            Button("Magic link sent", type="submit", id="submit-btn", disabled=True, hx_swap_oob="true"))
+
+@rt('/verify_magic_link/{token}')
+def get(session, token: str):
+    now = datetime.now()
+    try:
+        user_mag = magic_links(where=f"magic_link_token = '{token}' AND magic_link_expiry > '{now}'")[0]
+        email=rl_users.selectone(user_id=user_mag.user_id).email
+        session['auth'] = email
+        magic_links.update({
+            'user_id': user_mag.user_id,
+            'magic_link_token': None,
+            'magic_link_expiry': None,
+            'is_active': True
+        })
+        return RedirectResponse('/main')
+    except IndexError:
+        return "Invalid or expired magic link"
+
 
 def basic_auth(f):
     @wraps(f)
