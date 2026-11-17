@@ -9,6 +9,10 @@ from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 from functools import wraps
 import os
+import matplotlib.pyplot as plt
+from fh_matplotlib import matplotlib2fasthtml
+import numpy as np
+import pandas as pd
 
 login_redir = RedirectResponse('/login', status_code=303)
 
@@ -365,6 +369,34 @@ def get(session):
         ('Прием лекарств', 'drug'),
         ('Общий балл', 'total_score')
     ]
+    
+    @matplotlib2fasthtml
+    def graph(name):
+        for lable, symptom in symptoms:
+            if symptom == name:
+                scores = pd.Series([getattr(entries_by_date[date], symptom) 
+                                    if date in entries_by_date else np.nan 
+                                    for date in dates])
+                mean_score = scores.mean()
+                y_mean = [mean_score for i in range(7)]
+                colors = []
+                for v in scores:
+                    if np.isnan(v):
+                        colors.append("#cccccc")
+                    elif v <= 5:
+                        colors.append('#4caf50')
+                    elif v <= 10:
+                        colors.append('#ff9800')
+                    else:
+                        colors.append('#f44336')
+                plt.figure(figsize=(16, 5), dpi=300)
+                plt.bar(dates_formatted, scores, color=colors)
+                plt.plot(dates_formatted, y_mean)
+                plt.title('График симптомов')
+                plt.xlabel('Дата')
+                plt.ylabel('Баллы')
+                
+    
     return Titled('Дневник за последнюю неделю',
                   Table(
                       Thead(
@@ -384,7 +416,9 @@ def get(session):
                   ),
                   A("Добавить новую запись", href="/diary_record", role="button"),
                   P(),
-                  A("← Назад в меню", href="/main", role="button")
+                  A("← Назад в меню", href="/main", role="button"),
+                  P(),
+                  Div(graph('total_score')) 
     )
     
 serve()
