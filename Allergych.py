@@ -267,8 +267,9 @@ def get(session):
     return Titled('Меню',
                     Button("Выйти", hx_post="/logout", 
                         style="position: fixed; top: 16px; right: 16px; "),
-                    Button("Дневник", hx_get="/diary", 
-                        style="position: fixed; top: 16px; left: 16px; ")
+                    Div(A("Новая запись", href="/diary_record", role="button"),
+                        P()),
+                    Div(A("Дневник", href="/diary", role="button")),
                     )
                 
 @rt('/logout')
@@ -285,13 +286,13 @@ def RadioGroup(title,name):
         Li(Input('3', name=name, id=f"{name}-3", type="radio", value="3")),
     ))
 
-@rt('/diary')
+@rt('/diary_record')
 def get(session):
     return Titled('Дневник',
                   Div('Заполните форму ниже, чтобы добавить запись в дневник:'),
                   Form(
                         Fieldset('Дата', 
-                               Input(name="entry_date", type="date")
+                               Input(name="entry_date", type="date", value=date.today().isoformat(), required=True)
                                ),
                         RadioGroup('Чихание', 'sneezing'),
                         RadioGroup('Насморк', 'runny_nose'),
@@ -305,11 +306,85 @@ def get(session):
                                 Li(Input('Кортикостероиды (местного, назального применения - интраназальные глюкокортикостероиды)', 
                                       name="drug", id="drug-2", type="radio", value="2")),
                                 Li(Input('Глюкокортикоиды (системного действия)', 
-                                      name="drug", id="drug-3", type="radio", value="3")),),
-                        #Button('Добавить запись', type="submit"),
+                                      name="drug", id="drug-3", type="radio", value="3")))
+                                ),
+                        Button('Подтвердить', type="submit", id="new-record-btn"),
+                        Div(id="form-result"),
+                        hx_post="/diary_record",
+                        hx_target="#form-result"
+                    ),
+                    P(),
+                    A("Перейти в дневник", href="/diary", role="button"),
+                    P(),
+                    A("← Назад в меню", href="/main", role="button")
+                    )           
 
-                  )
+@rt('/diary_record')
+def post(session, entry_date:date, sneezing:int, runny_nose:int, nasal_congestion:int, nasal_itching:int, drug:int):
+    user = rl_users.selectone(email=session['auth'])
+    user_id = user.user_id
+    total_score = sneezing + runny_nose + nasal_congestion + nasal_itching + drug
+    existing = diary(where="user_id = ? AND entry_date = ?",
+                 where_args=(user_id, entry_date.isoformat()))
+    diary_dict = {
+        "user_id": user_id,
+        "entry_date": entry_date.isoformat(),
+        "sneezing": sneezing,
+        "runny_nose": runny_nose,
+        "nasal_congestion": nasal_congestion,
+        "nasal_itching": nasal_itching,
+        "drug": drug,
+        "total_score": total_score
+    }
+    if existing:
+        diary_dict["entry_id"] = existing[0].entry_id
+        diary.update(diary_dict)
+        output = "Запись за эту дату обновлена!"
+    else:
+        diary.insert(diary_dict)
+        output = "Запись успешно добавлена!"
+    return (P(output),  
+            Button("Submit", type="submit", id="new-record-btn", disabled=True, hx_swap_oob="true"))
+    
+@rt('/diary')
+def get(session): 
+    user = rl_users.selectone(email=session['auth'])
+    dates_formatted = [(date.today() - timedelta(days=i)).strftime("%d.%m.%Y") for i in range(6, -1, -1)]
+    dates = [(date.today() - timedelta(days=i)).isoformat() for i in range(6, -1, -1)] # List of the last 7 days (string format)
+    # Get the relevant data
+    rows = diary(
+        where="user_id = ? AND entry_date >= ? AND entry_date <= ?",
+        where_args=(user.user_id, dates[0], dates[-1])
+    ) 
+    entries_by_date = {row.entry_date: row for row in rows} # Dictionary for easy access
+    symptoms = [
+        ('Чихание', 'sneezing'),
+        ('Насморк', 'runny_nose'),
+        ('Заложенность носа', 'nasal_congestion'),
+        ('Зуд в носу', 'nasal_itching'),
+        ('Прием лекарств', 'drug'),
+        ('Общий балл', 'total_score')
+    ]
+    return Titled('Дневник за последнюю неделю',
+                  Table(
+                      Thead(
+                          Tr(Th('Дата'), *[Th(date) for date in dates_formatted]) # Header with dates
+                      ),
+                      Tbody(*[
+                          Tr(
+                              Th(lable),
+                              *[
+                                  Td(getattr(entries_by_date[date], symptom) if date in entries_by_date else '-')
+                                  for date in dates
+                              ]
+                          )
+                          for lable, symptom in symptoms
+                          ]
+                      )
+                  ),
+                  A("Добавить новую запись", href="/diary_record", role="button"),
+                  P(),
+                  A("← Назад в меню", href="/main", role="button")
     )
-    )
-
+    
 serve()
